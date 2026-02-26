@@ -3,6 +3,8 @@ defmodule MpvJsonIpc.Socket do
   use GenServer
   require Logger
 
+  @newlines ["\r\n", "\n", "\r"]
+
   @impl true
   def init(opts) do
     opts =
@@ -51,16 +53,16 @@ defmodule MpvJsonIpc.Socket do
   def receive_loop(socket, seed, start \\ "") do
     {:ok, data} = :socket.recv(socket, 0)
 
-    if String.ends_with?(data, ["\r", "\n", "\r\n"]) do
+    if String.ends_with?(data, @newlines) do
       (start <> data)
-      |> String.splitter(:binary.compile_pattern(["\r", "\n", "\r\n"]))
+      |> String.splitter(@newlines)
       |> Stream.reject(&(&1 == ""))
       |> Stream.map(&Jason.decode!(&1, keys: :atoms))
       |> Enum.each(&(MpvJsonIpc.Event.name(seed) |> MpvJsonIpc.Event.receive(&1)))
 
       receive_loop(socket, seed)
     else
-      receive_loop(socket, seed, data)
+      receive_loop(socket, seed, start <> data)
     end
   end
 
