@@ -4,7 +4,7 @@ defmodule MpvJsonIpc.MixProject do
   def project do
     [
       app: :mpv_json_ipc,
-      version: "0.1.0",
+      version: "0.1.1",
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
       description: description(),
@@ -13,7 +13,7 @@ defmodule MpvJsonIpc.MixProject do
       docs: [
         extras: ["README.md"] ++ Path.wildcard("pages/*.md"),
         main: "readme",
-        source_url: "https://github.com/n18abdel/elixir_mpv_json_ipc"
+        source_url: "https://github.com/a-nassim/elixir_mpv_json_ipc"
       ]
     ]
   end
@@ -42,7 +42,7 @@ defmodule MpvJsonIpc.MixProject do
   defp package() do
     [
       licenses: ["MIT"],
-      links: %{"GitHub" => "https://github.com/n18abdel/elixir_mpv_json_ipc"}
+      links: %{"GitHub" => "https://github.com/a-nassim/elixir_mpv_json_ipc"}
     ]
   end
 end
