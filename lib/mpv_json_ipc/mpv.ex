@@ -2,11 +2,68 @@ defmodule MpvJsonIpc.Mpv do
   @moduledoc """
   Main module to interract with an MPV instance.
   """
-  use MpvJsonIpc.Helper
+  use GenServer, restart: :transient
+  require Logger
+
+  alias MpvJsonIpc.Connection
+
+  @doc false
+  def name(seed), do: Connection.via(__MODULE__, seed)
+
+  @doc false
+  def start_link(opts \\ []),
+    do: GenServer.start_link(__MODULE__, opts, name: name(opts[:seed]))
+
+  @doc """
+  Sends the command to the MPV instance.
+
+  Available commands are [here](https://mpv.io/manual/master/#list-of-input-commands).
+
+  ## Examples
+      MpvJsonIpc.Mpv.command(server, "get_property", "playback-time")
+      MpvJsonIpc.Mpv.command(server, :get_property, :"playback-time")
+      MpvJsonIpc.Mpv.command(main, "expand-properties", ["print-text", "${playback-time}"])
+      MpvJsonIpc.Mpv.command(server, :set_property, [:pause, true])
+      MpvJsonIpc.Mpv.command(server, %{
+        name: "loadfile",
+        url:
+          "http://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+        options: %{
+          cache: "yes",
+          "demuxer-max-bytes": "100MiB",
+          "demuxer-max-back-bytes": "100MiB"
+        }
+      })
+  """
+  def command(server, cmd, args \\ [])
+
+  def command(server, cmd, _args) when is_map(cmd),
+    do:
+      GenServer.call(
+        server,
+        {:command, %{command: cmd}},
+        timeout()
+      )
+
+  def command(server, name, args) when (is_binary(name) or is_atom(name)) and is_list(args),
+    do:
+      GenServer.call(
+        server,
+        {:command,
+         %{
+           command: [name] ++ args
+         }},
+        timeout()
+      )
+
+  def command(server, name, arg)
+      when (is_binary(name) or is_atom(name)) and (is_binary(arg) or is_atom(arg)),
+      do: command(server, name, [arg])
+
   @impl true
   def init(opts) do
     {%{request_id: request_id, observer_id: observer_id, keybind_id: keybind_id}, opts} =
-      do_init(opts)
+      Connection.connect(opts)
 
     {:ok,
      {%{request_id: request_id, observer_id: observer_id, keybind_id: keybind_id}, opts[:seed]},
@@ -15,8 +72,14 @@ defmodule MpvJsonIpc.Mpv do
 
   @impl true
   def handle_continue({:logs, log_level, log_handler}, {state, seed}) do
-    new_state = log_setup({log_level, log_handler}, {state, seed})
+    new_state = Connection.log_setup({log_level, log_handler}, {state, seed})
     {:noreply, {new_state, seed}}
+  end
+
+  @impl true
+  def handle_call({:command, cmd}, _from, {state, seed}) do
+    {reply, new_state} = Connection.command(cmd, state, seed)
+    {:reply, reply, {new_state, seed}}
   end
 
   @impl true
@@ -30,7 +93,7 @@ defmodule MpvJsonIpc.Mpv do
     bind_name = "bind#{state[:keybind_id]}"
     :ok = MpvJsonIpc.Event.name(seed) |> MpvJsonIpc.Event.add_keybinding(bind_name, callback)
     cmd = %{command: [:keybind, name, "script-message custom-bind #{bind_name}"]}
-    {reply, new_state} = do_command(cmd, state, seed)
+    {reply, new_state} = Connection.command(cmd, state, seed)
     new_state = new_state |> Map.update!(:keybind_id, &(&1 + 1))
     {:reply, reply, {new_state, seed}}
   end
@@ -42,7 +105,7 @@ defmodule MpvJsonIpc.Mpv do
       |> MpvJsonIpc.Event.add_property_callback(state[:observer_id], callback)
 
     cmd = %{command: [:observe_property, state[:observer_id], name]}
-    {:ok, new_state} = do_command(cmd, state, seed)
+    {:ok, new_state} = Connection.command(cmd, state, seed)
     new_state = new_state |> Map.update!(:observer_id, &(&1 + 1))
     {:reply, state[:observer_id], {new_state, seed}}
   end
@@ -53,13 +116,13 @@ defmodule MpvJsonIpc.Mpv do
       MpvJsonIpc.Event.name(seed) |> MpvJsonIpc.Event.remove_property_callback(del_observer_id)
 
     cmd = %{command: [:unobserve_property, del_observer_id]}
-    {reply, new_state} = do_command(cmd, state, seed)
+    {reply, new_state} = Connection.command(cmd, state, seed)
     {:reply, reply, {new_state, seed}}
   end
 
   @impl true
   def handle_info({_port, {:exit_status, _}}, {state, seed}) do
-    Task.start(fn -> :ok = __MODULE__.Sup.stop(seed, :kill) end)
+    Task.start(fn -> :ok = MpvJsonIpc.Mpv.Sup.stop(seed) end)
     {:stop, :normal, {state, seed}}
   end
 
@@ -182,4 +245,9 @@ defmodule MpvJsonIpc.Mpv do
         {:unobserve_property, observer_id},
         timeout()
       )
+
+  defp timeout,
+    do:
+      :timer.seconds(5) +
+        (__MODULE__ |> Application.get_application() |> Application.get_env(:timeout))
 end
